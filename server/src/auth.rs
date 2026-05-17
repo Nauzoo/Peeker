@@ -10,7 +10,7 @@ use chrono::{Utc, Duration};
 #[derive(Debug, Serialize, Deserialize)]
 pub struct Claims {
     pub sub: String,
-    pub dvc_id: String,
+    //pub dvc_id: String,
     pub role: String,
     pub iat: usize,
     pub exp: usize
@@ -21,6 +21,14 @@ pub struct LoginRequest {
     pub username: String,
     pub password: String,
     pub device: String
+}
+
+#[derive(Debug, Deserialize)]
+pub struct RegisterRequest {
+    pub username: String,
+    pub password: String,
+    //pub device: String,
+    pub role: String
 }
 
 #[derive(serde::Serialize)]
@@ -63,7 +71,7 @@ where
 }
 
 
-pub fn generate_token(user_id: &str, device_id: &str, level: &str) -> String {
+pub fn generate_token(user_id: &str, level: &str) -> String {
     
 
     let current_momment = Utc::now().timestamp() as usize;
@@ -71,7 +79,7 @@ pub fn generate_token(user_id: &str, device_id: &str, level: &str) -> String {
 
     let my_claim = Claims {
         sub: user_id.to_owned(),
-        dvc_id: device_id.to_owned(),
+        // dvc_id: device_id.to_owned(),
         role: level.to_owned(),
         iat: current_momment,
         exp: expiration
