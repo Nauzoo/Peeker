@@ -103,7 +103,7 @@ pub fn generate_token(user_id: &str, level: &str) -> String {
         &header,
         &my_claim,
         &EncodingKey::from_secret(SECRET_KEY)
-    ).expect("Panick! Failed to generate JWT token.")
+    ).expect("Panic! Failed to generate JWT token.")
 
 }
 

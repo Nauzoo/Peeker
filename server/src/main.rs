@@ -5,6 +5,8 @@ use axum::{
     response::{IntoResponse, Response }, routing::{get, post}
 };
 
+use tower_http::services::ServeDir;
+
 use argon2::{
     password_hash::{rand_core::OsRng, PasswordHasher, SaltString},
     Argon2
@@ -100,7 +102,7 @@ async fn register(
     // 3. Salvando no banco de dados
     match novo_usuario.insert(&state.db).await {
         Ok(_) => Ok(StatusCode::CREATED), // Retorna 201 Created se der certo
-        Err(_) => Err(StatusCode::CONFLICT), // Retorna 409 Conflict se o email já existir
+        Err(_) => Err(StatusCode::CONFLICT), // Retorna 409 Conflict se o usuário já existir
     }
     
 
@@ -119,12 +121,15 @@ async fn main() {
 
     let state = AppState { db };
 
+    let public_path = concat!(env!("CARGO_MANIFEST_DIR"), "/public");
+
     let app = Router::new()
-    .route("/files/{*path}", get(read_file))
-    .route("/login", post(login))
-    .route("/register", post(register))
-    .layer(CookieManagerLayer::new())
-    .with_state(state);
+        .route("/files/{*path}", get(read_file))
+        .route("/login", post(login))
+        .route("/register", post(register))
+        .layer(CookieManagerLayer::new())
+        .fallback_service(ServeDir::new(public_path))
+        .with_state(state);
 
     let listener = tokio::net::TcpListener::bind("127.0.0.1:3000").await.unwrap();
 
