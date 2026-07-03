@@ -1,11 +1,8 @@
 use axum::{
-    Json, Router, 
-    extract::{Path, Request, State}, 
-    http::StatusCode, 
-    response::{IntoResponse, Response }, routing::{get, post}
+    Json, Router, extract::{Path, Request, State}, http::StatusCode, response::{IntoResponse, Response }, routing::{get, get_service}
 };
 
-use tower_http::services::ServeDir;
+use tower_http::services::{ServeDir, ServeFile};
 
 use argon2::{
     password_hash::{rand_core::OsRng, PasswordHasher, SaltString},
@@ -104,7 +101,6 @@ async fn register(
         Ok(_) => Ok(StatusCode::CREATED), // Retorna 201 Created se der certo
         Err(_) => Err(StatusCode::CONFLICT), // Retorna 409 Conflict se o usuário já existir
     }
-    
 
 }
 
@@ -124,11 +120,23 @@ async fn main() {
     let public_path = concat!(env!("CARGO_MANIFEST_DIR"), "/public");
 
     let app = Router::new()
+
         .route("/files/{*path}", get(read_file))
-        .route("/login", post(login))
-        .route("/register", post(register))
+        
+        .route(
+            "/login", 
+            get_service(ServeFile::new(format!("{public_path}/login.html")))
+            .post(login)
+        )
+        
+        .route(
+            "/register",
+            get_service(ServeFile::new(format!("{public_path}/register.html")))
+            .post(register))
+        
         .layer(CookieManagerLayer::new())
-        .fallback_service(ServeDir::new(public_path))
+        .fallback_service(ServeDir::new(public_path)
+        .not_found_service(ServeFile::new(format!("{public_path}/index.html"))))
         .with_state(state);
 
     let listener = tokio::net::TcpListener::bind("127.0.0.1:3000").await.unwrap();

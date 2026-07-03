@@ -1,22 +1,19 @@
 <script lang="js">
-    import { navigate } from "svelte-routing"
-
     let username = "";
     let password = "";
+    let role = "";
 
     function postLogin(){
-        fetch("/login", {
+        fetch("/register", {
             method: 'POST',
             credentials: 'include',
             headers: {
                 'Content-type': 'application/json'
             },
-            body: JSON.stringify({ username, password })
+            body: JSON.stringify({ username, password, role })
         }).then(response => {
             if (!response.ok) 
                 throw new Error("Login Failed" + response.status);
-            
-            navigate("/");
             return response;
         }).then(data => {
             console.log(data);
@@ -40,7 +37,13 @@
             <input id="password" type="password" bind:value={password} required placeholder="Digite sua senha">
         </div>
 
-        <button type="submit">Login</button>
+        
+        <div class="input-group">
+            <label for="role">Cargo</label>
+            <input id="role" type="text" bind:value={role} required placeholder="Digite seu cargo">
+        </div>
+
+        <button type="submit">Registrar</button>
     </form>
 </div>
 
