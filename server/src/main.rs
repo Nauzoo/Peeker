@@ -1,26 +1,25 @@
 use axum::{
-    Json, Router, extract::{Path, Request, State}, http::StatusCode, response::{IntoResponse, Response }, routing::{get, get_service}
+    Json, Router, extract::{Path, Query, Request}, http::StatusCode, response::{IntoResponse, Response }, routing::{get, post}
 };
 
-use tower_http::services::{ServeDir, ServeFile};
-
-use argon2::{
-    password_hash::{rand_core::OsRng, PasswordHasher, SaltString},
-    Argon2
-};
+use serde::{ Serialize, Deserialize };
+use tower_http::{services::{ServeDir, ServeFile}};
 
 use tower_cookies::{CookieManagerLayer};
 
 use tower::ServiceExt;
 
 mod auth;
-use crate::auth::auth::{Claims, RegisterRequest, AppState, login};
+use crate::auth::auth::{Claims, AppState, login, register};
 
-use sea_orm::{Database, DatabaseConnection, ActiveModelTrait, Set, ConnectionTrait, Schema, DbBackend};
+use sea_orm::{Database, DatabaseConnection, ConnectionTrait, Schema, DbBackend};
 
 mod entities;
 use crate::entities::users;
 
+use std::fs;
+
+use migration::{Migrator, MigratorTrait};
 
 async fn initialize_database(db: &DatabaseConnection) {
     /* Creates a new database, if it doesn't exist, and returns its connection. */
@@ -74,35 +73,66 @@ async fn read_file(
     }
 }
 
-async fn register(
-    State(state): State<AppState>, 
-    Json(payload): Json<RegisterRequest>)
-    -> Result<StatusCode, StatusCode> {
-    
-    let salt = SaltString::generate(&mut OsRng);
-    
-    let senha_hash = Argon2::default()
-        .hash_password(payload.password.as_bytes(), &salt)
-        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?
-        .to_string();
+#[derive(Deserialize)]
+pub struct PagingQuerry {
+    pub page : Option<usize>, // Option<usize> handles nullable values safelly
+    pub amount : Option<usize>
+}
 
-    // 2. Preparando os dados para o SeaORM
-    // Usamos ActiveModel quando queremos inserir ou atualizar dados.
-    // O `Set()` avisa ao SeaORM quais campos estamos alterando.
-    let novo_usuario = users::ActiveModel {
-        name: Set(payload.username),
-        password: Set(senha_hash),
-        role: Set(payload.role),
-        ..Default::default() // Ignora o `id` para que o SQLite gere automaticamente (auto-increment)
-    };
-    
-    // 3. Salvando no banco de dados
-    match novo_usuario.insert(&state.db).await {
-        Ok(_) => Ok(StatusCode::CREATED), // Retorna 201 Created se der certo
-        Err(_) => Err(StatusCode::CONFLICT), // Retorna 409 Conflict se o usuário já existir
+#[derive(Serialize)]
+pub struct DataInfo {
+    pub id : String,
+    pub name: String
+}
+
+async  fn get_files_batch(
+    _token: Claims,
+    Query(query): Query<PagingQuerry>,
+) -> Json<Vec<DataInfo>> {
+
+    let page = query.page.unwrap_or(1);
+    let amount = query.amount.unwrap_or(5);
+
+    let base_path = std::env::current_dir().unwrap().join("test_files");
+
+    let mut files_list = Vec::new();
+
+    if let Ok(entries) = fs::read_dir(base_path) {
+        for entry in entries.flatten() {
+            if let Ok(type_) = entry.file_type() {
+                if type_.is_file() {
+                let file_name = entry.file_name().to_string_lossy().into_owned();
+                files_list.push(
+                    DataInfo {
+                        id: file_name.clone(),
+                        name: file_name
+                    }
+                );
+               } 
+            } 
+        }
     }
 
+    files_list.sort_by(|a, b| a.name.cmp(&b.name));
+
+    let start = (page.saturating_sub(1)) * amount;
+
+    let batch: Vec<DataInfo> = files_list
+        .into_iter()
+        .skip(start)
+        .take(amount)
+        .collect();
+
+    // Retorna a lista como JSON
+    Json(batch)
+    
 }
+
+async fn get_login_status(
+    _token :Claims,
+) -> StatusCode {
+    StatusCode::OK
+} 
 
 #[tokio::main]
 async fn main() {
@@ -115,24 +145,29 @@ async fn main() {
 
     initialize_database(&db).await;
 
+    let _ = Migrator::up(&db, None).await;
+
     let state = AppState { db };
 
-    let public_path = concat!(env!("CARGO_MANIFEST_DIR"), "/public");
+    let public_path = concat!(env!("CARGO_MANIFEST_DIR"), "/frontend/dist");
 
     let app = Router::new()
 
-        .route("/files/{*path}", get(read_file))
+        .route("/api/auth/", get(get_login_status))
+        .route("/api/files", get(get_files_batch))
+
+        .route("/api/files/{*path}", get(read_file))
         
         .route(
-            "/login", 
-            get_service(ServeFile::new(format!("{public_path}/login.html")))
-            .post(login)
+            "/api/login", 
+            //get_service(ServeFile::new(format!("{public_path}/login.html")))
+            post(login)
         )
         
         .route(
-            "/register",
-            get_service(ServeFile::new(format!("{public_path}/register.html")))
-            .post(register))
+            "/api/register",
+            //get_service(ServeFile::new(format!("{public_path}/register.html")))
+            post(register))
         
         .layer(CookieManagerLayer::new())
         .fallback_service(ServeDir::new(public_path)
