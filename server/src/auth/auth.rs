@@ -3,15 +3,16 @@ use axum::{
 };
 
 use argon2::{
+    password_hash::{rand_core::OsRng, PasswordHasher, SaltString},
     Argon2, PasswordHash, PasswordVerifier,
 };
 
 use tower_cookies::{Cookie, Cookies};
 
-use sea_orm::{ColumnTrait, DatabaseConnection, EntityTrait, QueryFilter};
+use sea_orm::{ColumnTrait, DatabaseConnection, EntityTrait, QueryFilter, ActiveModelTrait, Set};
 
 use serde::{Serialize, Deserialize};
-use jsonwebtoken::{encode, EncodingKey, Header, decode, DecodingKey, Validation};
+use jsonwebtoken::{encode, decode, EncodingKey, Header, DecodingKey, Validation};
 use chrono::{Utc, Duration};
 
 use crate::entities::users;
@@ -84,7 +85,6 @@ where
 
 
 pub fn generate_token(user_id: &str, level: &str) -> String {
-    
 
     let current_momment = Utc::now().timestamp() as usize;
     let expiration = current_momment + (Duration::hours(24).num_seconds() as usize);
@@ -144,4 +144,38 @@ pub async fn login(
     cookies.add(cookie);
 
     Ok(StatusCode::OK)
+}
+
+// Note related to axum extractors : Extractors are a kind of handler that recives data from an HTTP request and converts it into
+// native rust struct
+pub async fn register(
+    State(state): State<AppState>, 
+    Json(payload): Json<RegisterRequest>) // <-- This weird @ss syntax Json(payload) is an extractor
+    -> Result<StatusCode, StatusCode> {
+    /* Registration handler : Recives a JSON payloand and uses an extractor to access its' information */
+    
+    let salt = SaltString::generate(&mut OsRng);
+    
+    let password_hash = Argon2::default()
+        .hash_password(payload.password.as_bytes(), &salt)
+        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?
+        .to_string();
+
+    // Preparing the data for SeaORM
+    // ActiveModel is used when inserting or updating data.
+    // "Set()" tells SeaORM which fields were updated.
+    let new_user = users::ActiveModel {
+        name: Set(payload.username),
+        password: Set(password_hash),
+        role: Set(payload.role),
+        ..Default::default() // This quirk makes that SQLite automatically generates the entity "id" by ignoring it
+        // PS: It will also ignore new fields added to the model
+    };
+    
+    // Saving the user in the databank
+    match new_user.insert(&state.db).await {
+        Ok(_) => Ok(StatusCode::CREATED),    // Returns 201 Created if everything goes fine
+        Err(_) => Err(StatusCode::CONFLICT), // Returns 409 Conflict if the user already exisists
+    }
+
 }
