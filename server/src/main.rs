@@ -12,28 +12,24 @@ use tower::ServiceExt;
 mod auth;
 use crate::auth::auth::{Claims, AppState, login, register};
 
-use sea_orm::{Database, DatabaseConnection, ConnectionTrait, Schema, DbBackend};
+use sea_orm::{Database, DatabaseConnection};
 
 mod entities;
-use crate::entities::users;
 
 use std::fs;
 
 use migration::{Migrator, MigratorTrait};
 
 async fn initialize_database(db: &DatabaseConnection) {
-    /* Creates a new database, if it doesn't exist, and returns its connection. */
-    
-    let schema = Schema::new(DbBackend::Sqlite); // Choosing the DB backend
-   
-    let mut stmt = schema.create_table_from_entity(users::Entity); // Uses user Model to build the table
-    stmt.if_not_exists();
-
-    db.execute(&stmt)
+    /* 
+       Aplica todas as migrations pendentes.
+       Se o banco for novo, roda tudo. Se já estiver atualizado, passa direto.
+    */
+    Migrator::up(db, None)
         .await
-        .expect("! Failed to create users entity to the database.");
+        .expect("! Failed to run database migrations.");
     
-    println!("✅ Database and entities verified successfully!");
+    println!("✅ Database migrations applied successfully!");
 }
 
 fn validate_path(base_path: &std::path::Path, child_path: &str) -> Result<std::path::PathBuf, std::io::Error> {
@@ -144,8 +140,6 @@ async fn main() {
         .expect("Não foi possível conectar ao banco SQLite");
 
     initialize_database(&db).await;
-
-    let _ = Migrator::up(&db, None).await;
 
     let state = AppState { db };
 
