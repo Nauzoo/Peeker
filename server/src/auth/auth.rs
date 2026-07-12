@@ -114,14 +114,14 @@ pub async fn login(
      -> Result<StatusCode, StatusCode> {
     
 
-    let user_found = users::Entity::find().filter(users::Column::Name.eq(&payload.username))
+    let user_found = users::Entity::find().filter(users::Column::Username.eq(&payload.username))
     .one(&state.db)
     .await
     .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?
     .ok_or(StatusCode::UNAUTHORIZED)?; 
 
 
-    let db_hash = user_found.password;
+    let db_hash = user_found.password_hash;
 
     let parsed_hash = PasswordHash::new(&db_hash)
         .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
@@ -165,8 +165,8 @@ pub async fn register(
     // ActiveModel is used when inserting or updating data.
     // "Set()" tells SeaORM which fields were updated.
     let new_user = users::ActiveModel {
-        name: Set(payload.username),
-        password: Set(password_hash),
+        username: Set(payload.username),
+        password_hash: Set(password_hash),
         role: Set(payload.role),
         ..Default::default() // This quirk makes that SQLite automatically generates the entity "id" by ignoring it
         // PS: It will also ignore new fields added to the model
