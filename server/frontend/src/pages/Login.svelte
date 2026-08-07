@@ -1,5 +1,5 @@
 <script>
-    // Recebemos as funções do App.svelte
+    import { appState } from "../GlobalState.svelte.js";
 
     /** @type {() => void} */
     export let irParaDashboard;
@@ -10,13 +10,17 @@
     let password = "";
 
     async function processarLogin() {
-        const resposta = await fetch("/api/login", {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ username, password })
+        const response = await fetch("/api/login", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ username, password }),
         });
 
-        if (resposta.ok) {
+        if (response.ok) {
+            const data = await response.json();
+            appState.user_id = data.id;
+            appState.user_roll = data.role;
+
             console.log("Login de sucesso! Trocando de tela...");
             irParaDashboard(); // <--- Troca a tela na hora!
         } else {
@@ -33,7 +37,6 @@
 <button on:click={irParaRegistro}>Ainda não tem conta? Registre-se</button>
 
 <style>
-
     h2 {
         text-align: center;
         color: #333;

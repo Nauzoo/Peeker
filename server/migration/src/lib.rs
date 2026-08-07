@@ -2,6 +2,7 @@ pub use sea_orm_migration::prelude::*;
 
 mod m20220101_000001_users;
 mod m20260712_061208_files;
+mod m20260712_184826_tags;
 
 pub struct Migrator;
 
@@ -11,6 +12,7 @@ impl MigratorTrait for Migrator {
         vec![
             Box::new(m20220101_000001_users::Migration),
             Box::new(m20260712_061208_files::Migration),
+            Box::new(m20260712_184826_tags::Migration),
         ]
     }
 }
