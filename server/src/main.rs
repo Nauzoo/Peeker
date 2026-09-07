@@ -234,6 +234,100 @@ async fn delete_file(
     })))
 }
 
+#[derive(Deserialize)]
+pub struct TagRequest {
+    pub tag_name: String,
+}
+
+async fn create_tag(
+    State(state): State<AppState>,
+    _token: Claims,
+    Json(payload): Json<TagRequest>,
+) -> Result<Json<j_val>, StatusCode> {
+    let new_tag = entities::tags::ActiveModel {
+        name: Set(payload.tag_name),
+        ..Default::default()
+    };
+
+    new_tag
+        .insert(&state.db)
+        .await
+        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+
+    Ok(Json(json!({
+        "message" : "Tag successfully created"
+    })))
+}
+
+#[derive(Deserialize)]
+pub struct AttachTagRequest {
+    pub file_id: i64,
+    pub tag_id: i64,
+}
+
+async fn attach_tag_to_file(
+    State(state): State<AppState>,
+    _token: Claims,
+    Json(payload): Json<AttachTagRequest>,
+) -> Result<Json<j_val>, StatusCode> {
+    // 1. (Opcional) Verificar se o arquivo e a tag existem
+    let file_exists = entities::files::Entity::find_by_id(payload.file_id)
+        .one(&state.db)
+        .await
+        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?
+        .is_some();
+
+    let tag_exists = entities::tags::Entity::find_by_id(payload.tag_id)
+        .one(&state.db)
+        .await
+        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?
+        .is_some();
+
+    if !file_exists || !tag_exists {
+        return Err(StatusCode::NOT_FOUND);
+    }
+
+    // 2. Cria a relação inserindo na tabela intermediária
+    let new_relation = entities::file_tags::ActiveModel {
+        file_id: Set(payload.file_id),
+        tag_id: Set(payload.tag_id),
+    };
+
+    new_relation.insert(&state.db).await.map_err(|erro| {
+        eprintln!("Error linking tag to file: {}", erro);
+        // Se já existir a chave primária composta duplicada, o SQLite retorna erro de constraint
+        StatusCode::BAD_REQUEST
+    })?;
+
+    Ok(Json(json!({
+        "message": "Tag successfully linked to file",
+        "file_id": payload.file_id,
+        "tag_id": payload.tag_id
+    })))
+}
+
+async fn detach_tag_from_file(
+    State(state): State<AppState>,
+    _token: Claims,
+    Json(payload): Json<AttachTagRequest>,
+) -> Result<Json<j_val>, StatusCode> {
+    let relation = entities::file_tags::Entity::find_by_id((payload.file_id, payload.tag_id))
+        .one(&state.db)
+        .await
+        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?
+        .ok_or(StatusCode::NOT_FOUND)?;
+
+    relation.delete(&state.db).await.map_err(|erro| {
+        eprintln!("Error detaching tag from file: {}", erro);
+        StatusCode::INTERNAL_SERVER_ERROR
+    })?;
+
+    Ok(Json(json!({
+        "message": "Tag successfully detached from file",
+        "file_id": payload.file_id,
+        "tag_id": payload.tag_id
+    })))
+}
 #[tokio::main]
 async fn main() {
     let db_url = "sqlite://server_data.db?mode=rwc"; // TODO : mover para env
@@ -256,6 +350,9 @@ async fn main() {
         .route("/api/files/{*path}", get(read_file))
         .route("/api/upload", post(upload_file))
         .route("/api/delete/{id}", delete(delete_file))
+        .route("/api/tag/create", post(create_tag))
+        .route("/api/tag/attach", post(attach_tag_to_file))
+        .route("/api/tag/detach", post(detach_tag_from_file))
         .layer(CookieManagerLayer::new())
         .fallback_service(
             ServeDir::new(public_path)
