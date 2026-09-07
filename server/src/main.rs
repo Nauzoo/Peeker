@@ -16,11 +16,12 @@ use tower::ServiceExt;
 mod auth;
 use crate::auth::auth::{AppState, Claims, get_login_status, login, register};
 
-use sea_orm::{ActiveModelTrait, Database, DatabaseConnection, EntityTrait, ModelTrait, Set};
+use sea_orm::{
+    ActiveModelTrait, Database, DatabaseConnection, EntityTrait, ModelTrait, QuerySelect, Set,
+};
 
 mod entities;
 
-use std::fs;
 use tokio::fs::File as tokio_file;
 use tokio::io::AsyncWriteExt;
 
@@ -93,40 +94,41 @@ pub struct PagingQuerry {
 
 #[derive(Serialize)]
 pub struct DataInfo {
-    pub id: String,
+    pub id: i64,
     pub name: String,
+    pub path: String,
 }
 
-async fn get_files_batch(_token: Claims, Query(query): Query<PagingQuerry>) -> Json<Vec<DataInfo>> {
+async fn get_files_batch(
+    State(state): State<AppState>,
+    _token: Claims,
+    Query(query): Query<PagingQuerry>,
+) -> Result<Json<Vec<DataInfo>>, StatusCode> {
     let page = query.page.unwrap_or(1);
     let amount = query.amount.unwrap_or(5);
 
-    let base_path = std::env::current_dir().unwrap().join("test_files");
+    let offset = (page.saturating_sub(1) * amount) as u64;
 
-    let mut files_list = Vec::new();
+    let files = entities::files::Entity::find()
+        .offset(offset)
+        .limit(amount as u64)
+        .all(&state.db)
+        .await
+        .map_err(|erro| {
+            eprintln!("Error querying files from database: {}", erro);
+            StatusCode::INTERNAL_SERVER_ERROR
+        })?;
 
-    if let Ok(entries) = fs::read_dir(base_path) {
-        for entry in entries.flatten() {
-            if let Ok(type_) = entry.file_type() {
-                if type_.is_file() {
-                    let file_name = entry.file_name().to_string_lossy().into_owned();
-                    files_list.push(DataInfo {
-                        id: file_name.clone(),
-                        name: file_name,
-                    });
-                }
-            }
-        }
-    }
+    let files_list: Vec<DataInfo> = files
+        .into_iter()
+        .map(|file| DataInfo {
+            id: file.id,
+            name: file.name,
+            path: file.path,
+        })
+        .collect();
 
-    files_list.sort_by(|a, b| a.name.cmp(&b.name));
-
-    let start = (page.saturating_sub(1)) * amount;
-
-    let batch: Vec<DataInfo> = files_list.into_iter().skip(start).take(amount).collect();
-
-    // Retorna a lista como JSON
-    Json(batch)
+    Ok(Json(files_list))
 }
 
 pub async fn upload_file(
@@ -197,7 +199,7 @@ pub async fn upload_file(
 async fn delete_file(
     State(state): State<AppState>,
     token: Claims,
-    Path(file_id): Path<i32>,
+    Path(file_id): Path<i64>,
 ) -> Result<Json<j_val>, StatusCode> {
     if token.role != "admin" {
         return Err(StatusCode::FORBIDDEN);
@@ -249,19 +251,11 @@ async fn main() {
     let app = Router::new()
         .route("/api/auth/", get(get_login_status))
         .route("/api/files", get(get_files_batch))
-        .route(
-            "/api/login",
-            //get_service(ServeFile::new(format!("{public_path}/login.html")))
-            post(login),
-        )
-        .route(
-            "/api/register",
-            //get_service(ServeFile::new(format!("{public_path}/register.html")))
-            post(register),
-        )
+        .route("/api/login", post(login))
+        .route("/api/register", post(register))
         .route("/api/files/{*path}", get(read_file))
         .route("/api/upload", post(upload_file))
-        .route("/api/files/{*path}", delete(delete_file))
+        .route("/api/delete/{id}", delete(delete_file))
         .layer(CookieManagerLayer::new())
         .fallback_service(
             ServeDir::new(public_path)

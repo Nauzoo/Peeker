@@ -9,8 +9,9 @@
     import { appState } from "../GlobalState.svelte.js";
 
     interface file {
-        id: string | number;
+        id: number | string;
         name: string;
+        path?: string;
     }
 
     function isVideo(filename: string): boolean {
@@ -191,6 +192,27 @@
             mensagem = "Erro de conexão.";
         }
     }
+
+    async function deleteFile(id: number | string) {
+        try {
+            // 2. Faz a requisição
+            const resposta = await fetch(`/api/delete/${id}`, {
+                method: "DELETE",
+                credentials: "include", // <-- ESSENCIAL para enviar o cookie de login!
+            });
+
+            if (resposta.ok) {
+                const dados = await resposta.json();
+                mensagem = `Sucesso! Arquivo deleteado.`;
+                console.log(dados);
+            } else {
+                mensagem = `Erro na deleção: ${resposta.status}`;
+            }
+        } catch (erro) {
+            console.error(erro);
+            mensagem = "Erro de conexão.";
+        }
+    }
 </script>
 
 <!--
@@ -236,7 +258,7 @@ Dash board Containing the file grid and its' functionalities
                         {#if isVideo(a_file.name)}
                             <video
                                 class="w-full object-cover rounded-lg pointer-events-none"
-                                src={`/api/files/test_files/${a_file.id}`}
+                                src={`/api/files/${a_file.path}`}
                                 autoplay
                                 muted
                                 playsinline
@@ -244,11 +266,13 @@ Dash board Containing the file grid and its' functionalities
                                 <track kind="captions" />
                             </video>
                         {:else}
-                            <img
-                                class="w-full object-cover rounded-lg"
-                                src={`/api/files/test_files/${a_file.id}`}
-                                alt={a_file.name}
-                            />
+                            <div>
+                                <img
+                                    class="w-full object-cover rounded-lg"
+                                    src={`/api/files/${a_file.path}`}
+                                    alt={a_file.name}
+                                />
+                            </div>
                         {/if}
                     </GalleryThumbnail>
                 </div>
@@ -263,17 +287,18 @@ Dash board Containing the file grid and its' functionalities
                         controls
                         autoplay
                         muted
-                        src={`/api/files/test_files/${a_file.id}`}
+                        src={`/api/files/${a_file.path}`}
                     >
                         <track kind="captions" />
                     </video>
                 {:else}
                     <img
                         class="max-h-[80vh] max-w-full object-contain rounded-lg"
-                        src={`/api/files/test_files/${a_file.id}`}
+                        src={`/api/files/${a_file.path}`}
                         alt={a_file.name}
                     />
                 {/if}
+                <button onclick={() => deleteFile(a_file.id)}> deletar </button>
             </GalleryImage>
         {/each}
     </LightboxGallery>
