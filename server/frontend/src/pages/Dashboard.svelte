@@ -298,7 +298,14 @@ Dash board Containing the file grid and its' functionalities
                         alt={a_file.name}
                     />
                 {/if}
-                <button onclick={() => deleteFile(a_file.id)}> deletar </button>
+
+                {#if appState.user_roll == "admin"}
+                    <div class="absolute bottom-0 left-0">
+                        <button onclick={() => deleteFile(a_file.id)}>
+                            deletar
+                        </button>
+                    </div>
+                {/if}
             </GalleryImage>
         {/each}
     </LightboxGallery>
