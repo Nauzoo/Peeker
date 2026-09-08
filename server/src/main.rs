@@ -17,7 +17,8 @@ mod auth;
 use crate::auth::auth::{AppState, Claims, get_login_status, login, register};
 
 use sea_orm::{
-    ActiveModelTrait, Database, DatabaseConnection, EntityTrait, ModelTrait, QuerySelect, Set,
+    ActiveModelTrait, ColumnTrait, Database, DatabaseConnection, EntityTrait, ExprTrait, JoinType,
+    ModelTrait, QueryFilter, QuerySelect, RelationTrait, Set,
 };
 
 mod entities;
@@ -328,6 +329,79 @@ async fn detach_tag_from_file(
         "tag_id": payload.tag_id
     })))
 }
+
+#[derive(Deserialize)]
+pub struct SearchByNameRequest {
+    pub file_name: String,
+}
+
+async fn search_by_filename(
+    State(state): State<AppState>,
+    _token: Claims,
+    Json(payload): Json<SearchByNameRequest>,
+) -> Result<Json<j_val>, StatusCode> {
+    let files = entities::files::Entity::find()
+        .filter(entities::files::Column::Name.contains(&payload.file_name))
+        .all(&state.db)
+        .await
+        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+
+    let files_list: Vec<DataInfo> = files
+        .into_iter()
+        .map(|file| DataInfo {
+            id: file.id,
+            name: file.name,
+            path: file.path,
+        })
+        .collect();
+
+    Ok(Json(json!(files_list)))
+}
+
+#[derive(Deserialize)]
+pub struct SearchByTagRequest {
+    pub tag_ids: Vec<i64>,
+}
+
+async fn search_by_tags(
+    State(state): State<AppState>,
+    _token: Claims,
+    Json(payload): Json<SearchByTagRequest>,
+) -> Result<Json<j_val>, StatusCode> {
+    if payload.tag_ids.is_empty() {
+        return Ok(Json(json!([])));
+    }
+
+    let required_tag_count = payload.tag_ids.len() as i64;
+
+    let files = entities::files::Entity::find()
+        .join(
+            JoinType::InnerJoin,
+            entities::files::Relation::FileTags.def(),
+        )
+        .filter(entities::file_tags::Column::TagId.is_in(payload.tag_ids))
+        .group_by(entities::files::Column::Id)
+        .having(
+            sea_orm::sea_query::Expr::col(entities::file_tags::Column::TagId)
+                .count()
+                .eq(required_tag_count),
+        )
+        .all(&state.db)
+        .await
+        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+
+    let files_list: Vec<DataInfo> = files
+        .into_iter()
+        .map(|file| DataInfo {
+            id: file.id,
+            name: file.name,
+            path: file.path,
+        })
+        .collect();
+
+    Ok(Json(json!(files_list)))
+}
+
 #[tokio::main]
 async fn main() {
     let db_url = "sqlite://server_data.db?mode=rwc"; // TODO : mover para env
@@ -353,6 +427,8 @@ async fn main() {
         .route("/api/tag/create", post(create_tag))
         .route("/api/tag/attach", post(attach_tag_to_file))
         .route("/api/tag/detach", post(detach_tag_from_file))
+        .route("/api/search/filename", post(search_by_filename))
+        .route("/api/search/tag", post(search_by_tags))
         .layer(CookieManagerLayer::new())
         .fallback_service(
             ServeDir::new(public_path)
