@@ -2,6 +2,7 @@
 
 pub mod prelude;
 
+pub mod directory;
 pub mod file_tags;
 pub mod files;
 pub mod tags;
