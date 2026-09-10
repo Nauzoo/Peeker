@@ -4,6 +4,7 @@ mod m20220101_000001_users;
 mod m20260712_061208_files;
 mod m20260712_184826_tags;
 mod m20260908_020252_directories;
+mod m20260909_195617_add_father_to_dir;
 
 pub struct Migrator;
 
@@ -15,6 +16,7 @@ impl MigratorTrait for Migrator {
             Box::new(m20260712_061208_files::Migration),
             Box::new(m20260712_184826_tags::Migration),
             Box::new(m20260908_020252_directories::Migration),
+            Box::new(m20260909_195617_add_father_to_dir::Migration),
         ]
     }
 }

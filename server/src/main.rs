@@ -1,3 +1,5 @@
+use std::path::PathBuf;
+
 use axum::{
     Json, Router,
     extract::{Multipart, Path, Query, Request, State},
@@ -44,46 +46,47 @@ async fn initialize_database(db: &DatabaseConnection) {
     println!("✅ Database migrations applied successfully!");
 }
 
-fn validate_path(
-    base_path: &std::path::Path,
-    child_path: &str,
-) -> Result<std::path::PathBuf, std::io::Error> {
-    /* Sanatization function, checks whether the accessed path is part of the base path, preventing path traversal. */
-
-    let full_path = base_path.join(child_path);
-
-    let canon_base_path = std::fs::canonicalize(base_path)?;
-
-    let canon_full_path = std::fs::canonicalize(full_path)?;
-
-    if !canon_full_path.starts_with(canon_base_path) {
-        return Err(std::io::Error::new(
-            std::io::ErrorKind::PermissionDenied,
-            "Access denied!",
-        ));
+async fn validate_path(db: &DatabaseConnection, file_path: &str) -> Result<PathBuf, StatusCode> {
+    /* Checks wheter the root of the accessed path is listed on the databank, preventing path traversal. */
+    let directories = entities::directory::Entity::find()
+        .all(db)
+        .await
+        .map_err(|erro| {
+            eprintln!("Error while searching directory {}", erro);
+            StatusCode::INTERNAL_SERVER_ERROR
+        })?;
+    let canonical_file = std::fs::canonicalize(file_path).map_err(|_| StatusCode::NOT_FOUND)?;
+    let is_allowed = directories.into_iter().any(|dir| {
+        if let Ok(canon_dir) = std::fs::canonicalize(&dir.path) {
+            canonical_file.starts_with(canon_dir)
+        } else {
+            false
+        }
+    });
+    if is_allowed {
+        Ok(canonical_file)
+    } else {
+        Err(StatusCode::FORBIDDEN)
     }
-
-    Ok(canon_full_path)
 }
 
 async fn read_file(
+    State(state): State<AppState>,
     _token: Claims,
     Path(file_path): Path<String>,
     http_request: Request,
 ) -> Result<Response, StatusCode> {
-    /* returns a file stream from a path.*/
-
-    // TODO : move base_path" to a env. variable.
-    let base_path = std::env::current_dir().unwrap();
-
-    match validate_path(&base_path, &file_path) {
+    match validate_path(&state.db, &file_path).await {
         Ok(file_found) => {
             let service = tower_http::services::ServeFile::new(file_found);
-            let answer = service.oneshot(http_request).await.unwrap();
+            let answer = service
+                .oneshot(http_request)
+                .await
+                .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
 
             Ok(answer.into_response())
         }
-        Err(_err) => Err(StatusCode::NOT_FOUND),
+        Err(status) => Err(status),
     }
 }
 
@@ -132,15 +135,31 @@ async fn get_files_batch(
     Ok(Json(files_list))
 }
 
+#[derive(Deserialize)]
+pub struct UploadQuery {
+    pub directory_id: Option<i64>,
+}
+
 pub async fn upload_file(
     State(state): State<AppState>,
     token: Claims,
+    Query(query): Query<UploadQuery>,
     mut multipart: Multipart,
 ) -> Result<Json<j_val>, StatusCode> {
-    let uploads_dir = "./test_files";
+    let uploads_dir = if let Some(dir_id) = query.directory_id {
+        let directory = entities::directory::Entity::find_by_id(dir_id)
+            .one(&state.db)
+            .await
+            .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?
+            .ok_or(StatusCode::NOT_FOUND)?;
+
+        directory.path
+    } else {
+        "./test_files".to_string()
+    };
 
     // CORREÇÃO 1: create_dir_all não falha se a pasta já existir
-    tokio::fs::create_dir_all(uploads_dir)
+    tokio::fs::create_dir_all(&uploads_dir)
         .await
         .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
 
@@ -402,6 +421,49 @@ async fn search_by_tags(
     Ok(Json(json!(files_list)))
 }
 
+#[derive(Deserialize)]
+pub struct CreateDirectoryRequest {
+    pub parent_directory_id: Option<i64>,
+    pub name: String,
+}
+
+async fn create_directory(
+    State(state): State<AppState>,
+    token: Claims,
+    Json(payload): Json<CreateDirectoryRequest>,
+) -> Result<Json<j_val>, StatusCode> {
+    let mut parent_path = ".".to_string(); // TODO: usar o valor do diretorio padrao definido em ENV
+
+    if let Some(parent_id) = payload.parent_directory_id {
+        let parent_directory = entities::directory::Entity::find_by_id(parent_id)
+            .one(&state.db)
+            .await
+            .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?
+            .ok_or(StatusCode::NOT_FOUND)?;
+
+        parent_path = parent_directory.path;
+    }
+
+    let full_path = format!("{}/{}", parent_path, payload.name);
+    let new_dir = entities::directory::ActiveModel {
+        name: Set(payload.name.clone()),
+        father: Set(payload.parent_directory_id),
+        path: Set(full_path.clone()),
+        creator: Set(token.sub),
+        ..Default::default()
+    };
+
+    tokio::fs::create_dir_all(full_path)
+        .await
+        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+
+    new_dir
+        .insert(&state.db)
+        .await
+        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+
+    Ok(Json(json!("Diretorio criado com sucesso!")))
+}
 #[tokio::main]
 async fn main() {
     let db_url = "sqlite://server_data.db?mode=rwc"; // TODO : mover para env
@@ -429,6 +491,7 @@ async fn main() {
         .route("/api/tag/detach", post(detach_tag_from_file))
         .route("/api/search/filename", post(search_by_filename))
         .route("/api/search/tag", post(search_by_tags))
+        .route("/api/directory/create", post(create_directory))
         .layer(CookieManagerLayer::new())
         .fallback_service(
             ServeDir::new(public_path)
